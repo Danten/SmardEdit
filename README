@@ -1,0 +1,41 @@
+So this is not very good code, my current excuse is that it is proof of concept :)
+
+To use this software you need the following packages from hackage:
+
+   ansi-terminal
+   ansi-wl-pprint
+
+Run the application in ghci, `ghci Main.hs` and then `:main`.
+
+To use it:
+    This is an AST editor and you have certain nodes in focus (this is denoted
+    with [ * ]). Some nodes doesn't have any values (e.g you haven't edit them
+    yet), these are denoted with <?>. These are called holes.
+
+    To create nodes press 'c' at a hole, after that you specify what to create:
+        'm' -> module
+        'd' -> definition
+        'l' -> lambda
+        'a' -> function application
+    The first three of these will wait for you to enter the name of the ident-
+    ifier for the binding variable. Press enter afterwards to accept namen.
+    !! notice you cant abort !!
+
+    At a hole you can also insert an identifier by pressing 'v' and entering
+    a string for which name you want.
+
+    Some nodes can have multiple children, (e.g modules and applications)
+    When you focus one of the children of such a node you can do this:
+        'a' -> append a hole to the right of the focus
+        'i' -> insert a hole to the left of the focus
+        'd' -> delete current focus (unless only child)
+
+    By pressing 'e' (erase) you replace current focus with a hole.
+
+    To move the focus, vim keys are used i.e. :
+        'h' -> move to previous sibling
+        'j' -> move to parent node
+        'k' -> move to first child node
+        'l' -> move to next sibling
+
+    Finally you can quit by pressing 'q'.
