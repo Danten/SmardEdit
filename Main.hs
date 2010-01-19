@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.State
 import Control.Monad.Reader
 
@@ -15,94 +16,35 @@ import Text.PrettyPrint.ANSI.Leijen
 
 import Types
 
-type EIO = StateT (Id, Env) IO
+type EIO =  IO
 
 runEIO :: EIO a -> IO a
-runEIO e = evalStateT e (0, M.empty)
+runEIO e = e
 
         
-prContext :: Context -> EIO ()
-prContext (tr, f) = do
-    env <- gets snd
-    io $ putDoc $ maybe (text "error!!") (prFocus env) $ transform tr (addFocus f)
-
-addFocus :: Focus -> Focus
-addFocus f = case f of
-    FDef  x -> FDef  $ DFocus x
-    FExpr x -> FExpr $ EFocus x
-    FPat  x -> FPat  $ PFocus x
-
-transform :: Trace -> Focus -> Maybe Focus
-transform [] f = return f
-transform (c : cs) f = transform cs =<< case c of
-    FromModule id pr ne -> (FDef . Module id . bet pr ne) `liftM` getDef f
-    FromDef id -> (FDef . ValDef id) `liftM` getExpr f
-    FromLambda id -> (FExpr . Lambda id) `liftM` getExpr f
-    FromCaseScrut pats -> (FExpr . flip Case pats) `liftM` getExpr f
-    FromCasePat scrut pr e ne
-        -> (FExpr . Case scrut . bet pr ne . flip (,) e) `liftM` getPat f
-    FromCaseExpr scrut pr p ne
-        -> (FExpr . Case scrut . bet pr ne . (,) p) `liftM` getExpr f
-    FromApp pr ne -> (FExpr . App . bet pr ne) `liftM` getExpr f
-    FromPApp pr ne -> (FPat . PApp . bet pr ne) `liftM` getPat f
-     
-
-prFocus :: Env -> Focus -> Doc
-prFocus en f = case f of
-    FDef d  -> prDef  en d
-    FExpr e -> prExpr en e
-    FPat p  -> prPat  en p
+prContext :: (p -> [Doc] -> Doc) -> Context p-> EIO ()
+prContext pr (tr, f) = do
+    io $ putDoc $ maybe (text "error!!") (prTree pr) $ transform tr (Focus f)
 
 focus :: Doc -> Doc
 focus x = f lbracket <> x <> f rbracket
     where f = bold . red
 
+prTree :: (p -> [Doc] -> Doc) -> Tree p -> Doc
+prTree pr tree = case tree of
+    Hole -> prHole
+    Focus tree' -> focus $ prTree pr tree'
+    Node p ps -> pr p (map (prTree pr) ps)
 
 prKey :: String -> Doc
 prKey = blue . bold . text
 
-prId :: Env -> Id -> Doc
-prId env id = case M.lookup id env of
-    Nothing -> ondullred $ text "?ERROR?"
-    Just i  -> green $ text i
-
-prDef :: Env -> Def -> Doc
-prDef en def = case def of
-    Module id es -> parens $ prKey "module" <+> prId en id <> line
-        <> indent 2 (vsep . intersperse empty $ map (prDef en) es)
-    ValDef id e -> parens $ prKey "define" <+> prId en id <> line 
-        <> indent 2 (prExpr en e)
-    DFocus def -> focus $ prDef en def
-    _ -> prHole
-
-prExpr :: Env -> Expr -> Doc
-prExpr en exp = case exp of
-    Lambda id e -> parens $ prKey "lambda" <+> prId en id <> line 
-        <> indent 2 (prExpr en e)
-    Case scrut pats -> parens $ prKey "case" <+> prExpr en scrut <> line
-        <> indent 2 (vsep [ parens $ prPat en p <+> prExpr en e | (p,e) <- pats])
-    App es -> parens $ lispindent $ map (prExpr en) es
-    Var id -> prId en id
-    EFocus e -> focus $ prExpr en e
-    _ -> prHole
-
-lispindent (x:xs) = x <+> align (vsep xs)
-lispindent []  = empty
-
-prPat :: Env -> Pat -> Doc
-prPat en pat = case pat of
-    PApp ps -> parens $ hsep $ map (prPat en) ps
-    PVar id -> prId en id
-    PFocus p-> focus $ prPat en p
-    _ -> prHole
-
 prHole :: Doc
 prHole = cyan $ text "<?>"
 
-defExpr :: EIO Context
-defExpr = do 
-    [mid, id, x] <- mapM newId ["test", "id", "x"]
-    return (FromModule mid [ValDef id $ Lambda x (Var x)] [] : [], FDef DHole)
+defExpr :: EIO (Context String)
+defExpr = return
+    ([], Node "title" [Node "section 1" [Hole], Node "section 2" [Hole, Hole]])
 
 main :: IO ()
 main = runEIO $ defExpr >>= loop
@@ -114,60 +56,30 @@ reset = io $ do
     clearScreen
     setCursorPosition 0 0
 
-loop :: Context -> EIO ()
+loop :: Context String -> EIO ()
 loop c@(cs, e) = do
     reset
-    prContext c
+    prContext prS c
     io $ putStrLn ""
     x <- io getChar
     case x of
         'q' -> reset
         'c' -> create c
-        'a' -> next (append ToRight) c
-        'i' -> next (append ToLeft) c
+        'a' -> next appendRight c
+        'i' -> next appendLeft c
         'd' -> next delete c
         'h' -> next moveLeft c
         'j' -> next moveDown c
         'k' -> next moveUp c
         'l' -> next moveRight c
-        'v' -> createVar c 
         _ -> loop c
     where
         next f c = loop $ maybe c id (f c)
+        prS s cs = prKey "+" <+> parens (text s) 
+            <> if null cs then empty else linebreak <> indent 4 (vsep cs)
 
---mov d c = loop . fromJust $ move d c `mplus` return c
-
-newId :: String -> EIO Id
-newId s = do
-    (id, env) <- get
-    put $ (id + 1, M.insert id s env)
-    return id
-
-create :: Context -> EIO ()
-create ctx@(_, f) = do
-    x <- io getChar
-    let getId = io getLine >>= newId
-    case f of
-        FDef _ -> case x of
-            'm' -> getId >>= \i -> next (createModule i) ctx
-            'd' -> getId >>= \i -> next (createDef i) ctx
-            _ -> loop ctx
-        FExpr _ -> case x of
-            'l' -> getId >>= \i -> next (createLambda i) ctx
-            'c' -> next createCase ctx
-            'a' -> next createApp ctx
-            _ -> loop ctx
-        FPat _ -> case x of
-            'a' -> next createPApp ctx
-            _ -> loop ctx
-    where
-        next f c = loop $ maybe c id (f c)
-
-createVar :: Context -> EIO ()
-createVar (c, FExpr EHole) = do
-    id <- io getLine >>= newId
-    loop (c, FExpr $ Var id)
-createVar (c, FPat PHole) = do
-    id <- io getLine >>= newId
-    loop (c, FPat $ PVar id)
-createVar c = loop c
+create :: Context String -> EIO ()
+create (cs, Hole) = do
+    str <- io getLine
+    loop (cs, Node str [Hole])
+create ctx = loop ctx
