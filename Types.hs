@@ -3,7 +3,7 @@ module Types where
 
 import Control.Applicative
 import Control.Monad
-import Data.Map
+import Data.Map(Map)
 
 data Def
     = Module Id [Def]
@@ -50,6 +50,8 @@ data Focus
 
 type Context = (Trace, Focus)
 
+data Beside = ToLeft | ToRight
+
 getDef :: Focus -> Maybe Def
 getDef (FDef d) = return d
 getDef _        = mzero
@@ -61,6 +63,12 @@ getExpr _         = mzero
 getPat :: Focus -> Maybe Pat
 getPat (FPat p) = return p
 getPat _        = mzero
+
+isHole :: Focus -> Bool
+isHole (FDef DHole)  = True
+isHole (FExpr EHole) = True
+isHole (FPat PHole)  = True
+isHole _ = False
 
 bet :: [a] -> [a] -> a -> [a]
 bet pr ne x = reverse pr ++ x : ne
@@ -137,6 +145,101 @@ moveRight (c : cs, f) = case c of
         pat <- getPat f
         return (FromPApp (pat:pr) ne : cs, FPat p)
     _ -> mzero
+
+mkHole :: Focus -> Focus
+mkHole f = case f of
+    FDef _ -> FDef DHole
+    FExpr _ -> FExpr EHole
+    FPat _ -> FPat PHole
+
+delete :: Context -> Maybe Context
+delete ([], _) = return ([], FDef DHole)
+delete (c : cs, f) | not (isHole f) = return (c:cs, mkHole f)
+                   | otherwise = case c of
+    -- Remove Child
+    FromModule id pr (d:ne) -> Just (FromModule id pr ne : cs, FDef d)
+    FromModule id (d:pr) [] -> Just (FromModule id pr [] : cs, FDef d)
+    FromCasePat scrut pr _ ((pat,exp) : ne) 
+        -> Just (FromCasePat scrut pr exp ne : cs, FPat pat)
+    FromCasePat scrut ((pat,exp):pr) _ []
+        -> Just (FromCasePat scrut pr exp [] : cs, FPat pat)
+    FromCaseExpr scrut pr _ ((pat,exp) : ne) 
+        -> Just (FromCaseExpr scrut pr pat ne : cs, FExpr exp)
+    FromCaseExpr scrut ((pat,exp):pr) _ []
+        -> Just (FromCaseExpr scrut pr pat [] : cs, FExpr exp)
+    FromApp pr (e:ne) -> Just (FromApp pr ne : cs, FExpr e)
+    FromApp (e:pr) [] -> Just (FromApp pr [] : cs, FExpr e)
+    FromPApp pr (p:ne) -> Just (FromPApp pr ne : cs, FPat p)
+    FromPApp (p:pr) [] -> Just (FromPApp pr [] : cs, FPat p)
+    -- Remove whole node
+    FromModule _ [] [] -> cont $ dhole
+    FromDef _ -> cont $ dhole
+    FromLambda _ -> cont $ ehole
+    FromCaseScrut _ -> cont $ ehole
+    FromCasePat EHole [] EHole [] -> cont $ phole
+    FromCaseExpr EHole [] PHole [] -> cont $ ehole
+    FromApp [] [] -> cont $ ehole
+    FromPApp [] [] -> cont $ phole
+    _ -> mzero
+    where
+        cont hole = return (cs, hole)
+        dhole = FDef DHole
+        ehole = FExpr EHole
+        phole = FPat PHole
+
+invert :: Beside -> Beside
+invert ToLeft = ToRight
+invert ToRight = ToLeft
+
+app :: Beside -> [a] -> [a] -> ([a] -> [a] -> b) -> a -> b
+app ToLeft pr ne f x  = f pr (x:ne)
+app ToRight pr ne f x = f (x:pr) ne
+
+append :: Beside -> Context -> Maybe Context
+append _ ([], _) = Nothing
+append b (c : cs, f) = (\(step, foc) -> (step:cs, foc)) <$> case c of
+    FromModule id pr ne -> do
+        def <- getDef f
+        return (app b pr ne (FromModule id) def, FDef DHole)
+    FromCasePat scrut pr ex ne -> do
+        pat <- getPat f
+        return ( app b pr ne (\pr ne -> FromCasePat scrut pr EHole ne) (pat,ex)
+               , FPat PHole)
+    FromCaseExpr scrut pr pat ne -> do
+        ex <- getExpr f
+        return ( app b pr ne (\pr ne -> FromCaseExpr scrut pr PHole ne) (pat,ex)
+               , FExpr EHole)
+    FromApp pr ne -> do
+        exp <- getExpr f
+        return (app b pr ne FromApp exp, FExpr EHole)
+    FromPApp pr ne -> do
+        pat <- getPat f
+        return (app b pr ne FromPApp pat, FPat PHole)
+    _ -> mzero
+
+createModule :: Id -> Context -> Maybe Context
+createModule name (cs, FDef DHole) = return (FromModule name [] [] : cs, FDef DHole)
+createModule _ _ = mzero
+
+createDef :: Id -> Context -> Maybe Context
+createDef name (cs, FDef DHole) = return (FromDef name : cs, FExpr EHole)
+createDef _ _ = mzero
+
+createLambda :: Id -> Context -> Maybe Context
+createLambda name (cs, FExpr EHole) = return (FromLambda name : cs, FExpr EHole)
+createLambda _ _ = mzero
+
+createCase :: Context -> Maybe Context
+createCase (cs, FExpr EHole) = return (FromCaseScrut [(PHole, EHole)] : cs, FExpr EHole)
+createCase _ = mzero
+
+createApp :: Context -> Maybe Context
+createApp (cs, FExpr EHole) = return (FromApp [] [] : cs, FExpr EHole)
+createApp _ = mzero
+
+createPApp :: Context -> Maybe Context
+createPApp (cs, FPat PHole) = return (FromPApp [] [] : cs, FPat PHole)
+createPApp _ = mzero
 
 {-
 move :: Direction -> Context -> Maybe Context

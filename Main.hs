@@ -79,10 +79,15 @@ prExpr :: Env -> Expr -> Doc
 prExpr en exp = case exp of
     Lambda id e -> parens $ prKey "lambda" <+> prId en id <> line 
         <> indent 2 (prExpr en e)
-    App es -> parens $ hsep $ map (prExpr en) es
+    Case scrut pats -> parens $ prKey "case" <+> prExpr en scrut <> line
+        <> indent 2 (vsep [ parens $ prPat en p <+> prExpr en e | (p,e) <- pats])
+    App es -> parens $ lispindent $ map (prExpr en) es
     Var id -> prId en id
     EFocus e -> focus $ prExpr en e
     _ -> prHole
+
+lispindent (x:xs) = x <+> align (vsep xs)
+lispindent []  = empty
 
 prPat :: Env -> Pat -> Doc
 prPat en pat = case pat of
@@ -117,16 +122,15 @@ loop c@(cs, e) = do
     x <- io getChar
     case x of
         'q' -> reset
-        --'c' -> create c
-        --'a' -> loop . fromJust $ append R c `mplus` return c
-        --'i' -> loop . fromJust $ append L c `mplus` return c
-        --'d' -> loop . fromJust $ delete c `mplus` return c
+        'c' -> create c
+        'a' -> next (append ToRight) c
+        'i' -> next (append ToLeft) c
+        'd' -> next delete c
         'h' -> next moveLeft c
         'j' -> next moveDown c
         'k' -> next moveUp c
         'l' -> next moveRight c
-        --'e' -> loop (cs, Hole)
-        --'v' -> createVar c 
+        'v' -> createVar c 
         _ -> loop c
     where
         next f c = loop $ maybe c id (f c)
@@ -138,23 +142,32 @@ newId s = do
     (id, env) <- get
     put $ (id + 1, M.insert id s env)
     return id
-{-
+
 create :: Context -> EIO ()
-create (c, Hole) = do
+create ctx@(_, f) = do
     x <- io getChar
     let getId = io getLine >>= newId
-    case x of
-        'm' -> getId >>= \i -> loop (FromModule i [] [] : c, Hole)
-        'd' -> getId >>= \i -> loop (FromDef i : c, Hole)
-        'l' -> getId >>= \i -> loop (FromLambda i : c, Hole)
-        'a' -> loop (FromApp [] [] : c, Hole)
-        _ -> loop (c, Hole)
-create c = loop c
+    case f of
+        FDef _ -> case x of
+            'm' -> getId >>= \i -> next (createModule i) ctx
+            'd' -> getId >>= \i -> next (createDef i) ctx
+            _ -> loop ctx
+        FExpr _ -> case x of
+            'l' -> getId >>= \i -> next (createLambda i) ctx
+            'c' -> next createCase ctx
+            'a' -> next createApp ctx
+            _ -> loop ctx
+        FPat _ -> case x of
+            'a' -> next createPApp ctx
+            _ -> loop ctx
+    where
+        next f c = loop $ maybe c id (f c)
 
 createVar :: Context -> EIO ()
-createVar (c, Hole) = do
+createVar (c, FExpr EHole) = do
     id <- io getLine >>= newId
-    loop (c, Var id)
+    loop (c, FExpr $ Var id)
+createVar (c, FPat PHole) = do
+    id <- io getLine >>= newId
+    loop (c, FPat $ PVar id)
 createVar c = loop c
-
--}
