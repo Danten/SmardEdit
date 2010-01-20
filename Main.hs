@@ -15,36 +15,34 @@ import System.Console.ANSI
 import Text.PrettyPrint.ANSI.Leijen
 
 import Types
+import Expr
+import Eval
 
 type EIO =  IO
 
 runEIO :: EIO a -> IO a
 runEIO e = e
-
         
 prContext :: (p -> [Doc] -> Doc) -> Context p-> EIO ()
 prContext pr (tr, f) = do
     io $ putDoc $ maybe (text "error!!") (prTree pr) $ transform tr (Focus f)
 
-focus :: Doc -> Doc
-focus x = f lbracket <> x <> f rbracket
-    where f = bold . red
 
-prTree :: (p -> [Doc] -> Doc) -> Tree p -> Doc
-prTree pr tree = case tree of
-    Hole -> prHole
-    Focus tree' -> focus $ prTree pr tree'
-    Node p ps -> pr p (map (prTree pr) ps)
-
-prKey :: String -> Doc
-prKey = blue . bold . text
-
-prHole :: Doc
-prHole = cyan $ text "<?>"
-
-defExpr :: EIO (Context String)
+defExpr :: EIO (Context Program)
 defExpr = return
-    ([], Node "title" [Node "section 1" [Hole], Node "section 2" [Hole, Hole]])
+    ([], Node (PDef $ Module "test") 
+            [ Node (PDef $ Def "id") 
+                [Node (PExpr App)
+                    [ Node (PExpr $ Lambda "x")
+                        [ Node (PExpr $ Var "x") []
+                        ]
+                    , Hole
+                    , Node (PExpr $ Var "y") []
+                    , Hole
+                    ]
+                ]
+            , Node (PDef $ Def "test") [Hole]
+            ])
 
 main :: IO ()
 main = runEIO $ defExpr >>= loop
@@ -56,15 +54,16 @@ reset = io $ do
     clearScreen
     setCursorPosition 0 0
 
-loop :: Context String -> EIO ()
+loop :: Context Program -> EIO ()
 loop c@(cs, e) = do
     reset
-    prContext prS c
+    prContext prProgram c
     io $ putStrLn ""
     x <- io getChar
     case x of
         'q' -> reset
-        'c' -> create c
+        --'c' -> create c
+        'e' -> next evalC c
         'a' -> next appendRight c
         'i' -> next appendLeft c
         'd' -> next delete c
@@ -75,11 +74,11 @@ loop c@(cs, e) = do
         _ -> loop c
     where
         next f c = loop $ maybe c id (f c)
-        prS s cs = prKey "+" <+> parens (text s) 
-            <> if null cs then empty else linebreak <> indent 4 (vsep cs)
-
+        evalC (cs, f) = (,) cs `liftM` eval f
+{-
 create :: Context String -> EIO ()
 create (cs, Hole) = do
     str <- io getLine
     loop (cs, Node str [Hole])
 create ctx = loop ctx
+-}

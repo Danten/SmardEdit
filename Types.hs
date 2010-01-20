@@ -2,6 +2,8 @@ module Types where
 
 import Control.Monad
 
+import Text.PrettyPrint.ANSI.Leijen
+
 data Tree p
     = Hole
     | Focus (Tree p) -- To be able to prettyprint, will hopefully go away later
@@ -64,3 +66,21 @@ delete (c : cs, Hole) = case c of
     InvNode p ls rs -> return (cs, Node p $ reverse ls ++ rs)
 delete (c : cs, _) = return (c : cs, Hole)
 delete ([], _) = return ([], Hole)
+
+-- --
+-- PrettyPrinting
+-- --
+
+
+focus :: Doc -> Doc
+focus x = f lbracket <> x <> f rbracket
+    where f = bold . red
+
+prTree :: (p -> [Doc] -> Doc) -> Tree p -> Doc
+prTree pr tree = case tree of
+    Hole -> prHole
+    Focus tree' -> focus $ prTree pr tree'
+    Node p ps -> pr p (map (prTree pr) ps)
+
+prHole :: Doc
+prHole = cyan $ text "<?>"
