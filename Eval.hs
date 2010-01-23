@@ -6,6 +6,8 @@ import Control.Monad
 import Types
 import Expr
 
+{-
+
 eval :: Tree Program -> Maybe (Tree Program)
 eval (Node (PExpr e) cs) = case e of
     App -> case cs of
@@ -39,4 +41,4 @@ free (Node (PExpr e) args) = case e of
     Var id -> [id]
     App -> args >>= free
     Lambda i -> filter (/=i) $ args >>= free
-    
+-}  

@@ -63,7 +63,9 @@ transform (c : cs) f = transform cs =<< case c of
 
 delete :: Context p -> M (Context p)
 delete (c : cs, Hole) = case c of
-    InvNode p ls rs -> return (cs, Node p $ reverse ls ++ rs)
+    InvNode p [] [] -> return (cs, Hole)
+    InvNode p (x:pr) [] -> return (InvNode p pr [] : cs, x)
+    InvNode p pr (x:ne) -> return (InvNode p pr ne : cs, x)
 delete (c : cs, _) = return (c : cs, Hole)
 delete ([], _) = return ([], Hole)
 
