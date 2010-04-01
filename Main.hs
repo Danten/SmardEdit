@@ -56,10 +56,10 @@ loop vty es =  do
     -- reset
     --xputStrLn $ "[" ++ show (mode es) ++ "]"
     -- putStrLn ""
-    update vty $ pic_for_image $ string def_attr $ show $ prExprCtx (focus es)
+    update vty $ pic_for_image $ string def_attr smode <-> (string def_attr $ show $ prExprCtx (focus es))
 
     evt <- next_event vty
-    refresh vty  -- need to set update first...
+    refresh vty 
     case evt of
         EvKey key modifes -> case filter (\(c,_,_) -> key == c) (controlActions es) of
                 [] -> loop vty es
@@ -67,31 +67,5 @@ loop vty es =  do
                        Quit -> shutdown vty -- return ()
                        Keep s -> putStrLn s >> loop vty es
                        Change es' -> loop vty es'
-{-        
-    case filter (\(c,_,_) -> x == c) (controlActions es) of
-        [] -> loop es
-        ((_,_, cmd):_) -> case cmd es of
-            Quit -> return ()
-            Keep s -> putStrLn s >> loop vty es
-            Change es' -> loop vty es'
--}
-{-    case filter (\(c,_,_) -> x == c) (controlActions c) of
-        []    -> case x of
-
-            '\^[' -> do getChar   -- ugly x 100 hack for arrow keys, won't work everywhere, sorry 
-                        x <- getChar
-                        case x of
-                            'B' -> next moveDown c
-                            'D' -> next moveLeft c
-                            'C' -> next moveRight c
-                            'A' -> next moveUp c
-                            x   -> putStrLn $ "new char, cool: " ++ [x]
-            _   -> case mode c of
-                Control -> case x of
-                    'q' -> return ()
-                    _   -> loop c
-                Input _ -> loop c
-        ((_,_, e):_) -> case e c of
-            Nothing -> putStrLn "looser!" >> loop c
-            Just x  -> loop x
--}
+  where
+    smode = "[" ++ show (mode es) ++ "]"
