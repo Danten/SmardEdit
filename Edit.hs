@@ -1,11 +1,54 @@
-module Edit where
+module Edit
+  ( Event(..)
+  , Mode(..)
+  , EditState(..)
+  , CmdRes(..)
+  , Cmd
+  , defaultEditState
+  ---- The language ---
+  -- Combinators
+  , (?->)
+  , (~->)
+  , (>->)
+  , (>-->)
+  , stop
+  -- Modifiers
+  , edit
+  , control
+  , quit
+  , setInput
+  , setFocus
+  -- Questions
+  , isEdit
+  , isControl
+  , isHole
+  , isAscii
+  -- Getters
+  , getFocus
+  , getAscii
+  , getInput
+  , getKey
+  ) where
 
 import Control.Monad
-import Data.List
-import Graphics.Vty
+import Data.Maybe
+
+import qualified Graphics.Vty as V
 
 import Simple
 import Moves
+
+infixr 5 ?->
+
+data Event = KeyEvent V.Key
+  deriving Eq
+  
+data Mode
+  = Control
+  | Edit 
+    { inputStr :: String }
+ deriving (Eq, Show)
+
 
 data Def = Def Ident [Ident] Expr Type
     deriving (Eq, Show)
@@ -20,103 +63,177 @@ data EditState = EditState
     , mode       :: Mode
     } deriving (Eq, Show)
 
-data Mode
-    = Control
-    | Input String
-    deriving (Eq, Show)
+-- defaultEditState = EditState [] [] (
+
+defaultEditState = EditState
+        { prevDefs   = []
+        , nextDefs   = []
+        , currentDef = ("main", [], TInt)
+        , topGamma   = [("main", TInt)]
+        , localGamma = []
+        , focus      = ([], int 3 `plus` int 43 `plus` int 67)
+        , mode       = Edit "Hejsan" -- Control
+        }
 
 data CmdRes t
     = Quit
-    | Keep String
     | Change t
+    | NoChange
+--    | Failure t
+  deriving Show
 
+    {-
+instance Monad CmdRes where
+    return           = Change
+    (Change t) >>= f =  f t 
+    
+    {- case f t of
+        Failure _ -> Failure t
+        x         -> x
+    -}
+    Quit       >>= _ = Quit
+    NoChange   >>= _ = NoChange
+--    Failure t  >>= f = f t
+-}
+{-
 instance Monad CmdRes where
     return = Change
 
     (Change t) >>= f = f t
     Keep s >>= _ = Keep s
     Quit   >>= _ = Quit
-
+    Failure t >>= f  = Failure t 
+-}
+{-
 instance MonadPlus CmdRes where
   mzero = Keep "MZero"
   c@(Change _) `mplus` _ = c
   _ `mplus` c = c
 
-type Cmd = EditState -> CmdRes EditState
+stop :: CmdRes t
+stop = mzero
+stopBecause = 
+-}
 
-scope :: Env -> Env -> Env
-scope = (++)
+stop :: CmdRes t
+stop = NoChange
 
-conScope :: Ident -> Env -> Env -> Type -> Env
-conScope iden e1 e2 t = 
-                    filter (\(name, typ) -> iden `isPrefixOf` name
-                            && lessOrEqual t typ) $ scope e1 e2
-  where
-    lessOrEqual typ1 typ2 | typ1 == typ2 = True
-    lessOrEqual typ1 (TFun _ typ2')  = lessOrEqual typ1 typ2'
-    lessOrEqual typ1 (TVar _) = True
-    lessOrEqual _ _ = False 
+change x = Change (x, ())
+same   x (e,_) = Change (e, x)
 
-controlActions :: EditState -> [(Key, String, Cmd)]
-controlActions editState = 
-    [ (KLeft , "left" , move moveLeft)
-    , (KRight, "right", move moveRight)
-    , (KUp   , "up"   , move moveUp)
-    , (KDown , "down" , move moveDown)
-    ] ++ case mode editState of
-    Input _ -> [ (KEsc, "escape", esc)
-               ]
-    Control -> case focus editState of
-        (ctx, expr) -> case expr of 
-            _ -> [ (KASCII 'd', "delete", deleteC) 
-                 , (KASCII 'e', "edit"  , edit)
-                 , (KASCII 'q', "quit"  , const Quit)
-                 ]
+type CmdInput = (EditState, Event) 
+--type Cmd = Cmd () -- CmdInput -> CmdRes EditState
+type Cmd t = CmdInput -> CmdRes (EditState, t)
+type Que = CmdInput -> Bool
 
--- | x >-> y, do x if succeed do y
+--- Modifiers ---
+-- | Enters Edit mode
+edit :: Cmd ()
+edit = setMode (Edit {inputStr = ""})
+
+-- | Enters control mode
+control :: Cmd () 
+control = setMode Control
+
+setMode :: Mode -> Cmd ()
+setMode md (es, ev) = change $ es {mode = md}
+
+setInput :: String -> Cmd ()
+setInput str = setMode (Edit {inputStr = str})
+
+setFocus :: ExprCtx -> Cmd ()
+setFocus ec (es, ev) = change $ es { focus = ec } 
+
+-- | Quits the application
+quit :: Cmd ()
+quit = const Quit
+
+--- Getters ---
+-- | Gives the current focus
+getFocus :: Cmd ExprCtx
+getFocus e@(es,_) = getFocus' (\c -> same c e) e
+
+getFocus' :: (ExprCtx -> t) -> CmdInput -> t
+getFocus' f (es, _) = f (focus es)
+
+getAscii' :: (Char -> t) -> t -> CmdInput -> t
+getAscii' f g (_, ev) = case ev of
+    KeyEvent (V.KASCII x) -> f x
+    _                     -> g
+
+getAscii :: Cmd Char
+getAscii e@(es,_) = getAscii' (\c -> same c e) stop e
+
+getInput' :: (String -> t) -> CmdInput -> t
+getInput' f (es, _) = f $ inputStr (mode es)
+
+getInput :: Cmd String
+getInput e@(es,_) = getInput' (\s -> same s e) e
+
+
+getKey :: Cmd V.Key
+getKey e@(_,KeyEvent ke) = same ke e
+--- Askers ---
+
+-- | Is the edit mode active
+isEdit :: Que
+isEdit (e,_) = case mode e of
+    Edit _ -> True
+    _      -> False
+
+isControl :: Que
+isControl (e,_) = case mode e of
+    Control -> True
+    _       -> False
+
+-- | Is the foucs at a hole
+isHole :: Que
+isHole = getFocus' (\(_,e) -> case e of
+    EHole -> True
+    _     -> False
+    )
+
+isAscii :: Char -> Que
+isAscii c = getAscii' ((==)c) False
+
+
+--- Combinators ---
+-- | p ?-> g, do g if predicate p is true
+(?->) :: Que -> Cmd t -> Cmd t
+(?->) p g e = case p e of
+    True  -> g e
+    False -> stop
+
+(~->) :: Que -> Cmd t -> Cmd t
+(~->) p g e = case not (p e) of
+    True  -> g e
+    False -> stop
+
+{-
+-- | f >-> g, if f succeds do g
 (>->) :: Cmd -> Cmd -> Cmd
-x >-> y = \e -> x e >>= y
+f >-> g = \e@(_,ev) -> case f e of
+    Change x -> g (x,ev)
+    x        -> x
+-}
 
--- | x >?> y, do x if fail do y
-(>?>) :: Cmd -> Cmd -> Cmd
-x >?> y = \e -> x e `mplus` y e
+f >-> g = f >--> const g
 
-move :: Move -> Cmd
-move move edit = case move $ focus edit of
-    Nothing  -> Keep "couldn't move"
-    Just foc -> Change edit { focus = foc }
+(>-->) :: Cmd s -> (s -> Cmd t) -> Cmd t
+f >--> g = \e@(_,ev) -> case f e of
+    Change (x,y) -> g y (x, ev)
+    NoChange -> NoChange
+    Quit     -> Quit
 
-replace :: Expr -> Cmd
-replace exp edit = case focus edit of
-    (ctx, _) -> return edit { focus = (ctx, exp) }
+-- (>>=) 
 
-deleteC :: Cmd
-deleteC = replace EHole
+--insert = isAscii ?-> getAscii' >-> undefined 
 
--- | checkExpr succeeds if the expression fulfills the predicates, otherwise fail
-checkExpr :: (Expr -> Bool) -> Cmd
-checkExpr p edit = case focus edit of
-    (_, e) -> case p e of
-        True  -> return edit
-        False -> mzero
+--- Functions (move me to another file, pretty please) --- 
 
-isAtHole :: Cmd
-isAtHole = checkExpr (== EHole)
 
-insertC :: Cmd 
-insertC = isAtHole >-> \edit -> return edit
-    { mode = Input "" }
 
-edit :: Cmd
-edit = deleteC >-> insertC
+--- Tests ---
 
-insertChar :: Char -> Cmd
-insertChar x edit = case mode edit of
-    Input str -> return edit
-        { mode = Input $ str ++ [x]}
-    _ -> mzero
-
-esc :: Cmd
-esc edit = case mode edit of
-    Input _ -> return edit { mode = Control }
-    _ -> mzero
+--- Edit state should not change
+--- e == ((const False) ?-> s) e 
